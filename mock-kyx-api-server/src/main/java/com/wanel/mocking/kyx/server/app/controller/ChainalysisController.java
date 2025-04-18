@@ -1,12 +1,15 @@
 package com.wanel.mocking.kyx.server.app.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.wanel.mocking.kyx.server.apis.KyxProviderApi;
@@ -31,7 +34,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -44,7 +49,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ChainalysisController implements KyxProviderApi {
 
     private final RiskCheckService riskCheckService;
-    private final Map<String, RiskCheckResult> registrationResults = new ConcurrentHashMap<>();
+    
+    // Map to store registration params for later risk checks when alerts are requested
+    private final Map<String, Map<String, Object>> registrationParams = new ConcurrentHashMap<>();
+    private final Random random = new Random();
+    
+    // Default expiration time is 1 hour (in milliseconds)
+    @Value("${chainalysis.registration.expiration-time-ms:3600000}")
+    private long expirationTimeMs;
 
     @Autowired
     public ChainalysisController(RiskCheckService riskCheckService) {
@@ -74,58 +86,135 @@ public class ChainalysisController implements KyxProviderApi {
     }
     
     /**
-     * Step 1: Register an address for KYA (Know Your Address) check
+     * Scheduled task to clean up expired registration entries
+     * Runs every 10 minutes
      */
-    @PostMapping("/kya/register")
-    public ResponseEntity<CAKyaRegisterResponse> registerKya(@Valid @RequestBody CAKyaRequest request) {
-        log.info("Received Chainalysis KYA register request: {}", request);
+    @Scheduled(fixedRate = 600000) // 10 minutes in milliseconds
+    public void cleanupExpiredRegistrations() {
+        log.info("Running scheduled cleanup of expired registrations");
+        long currentTime = Instant.now().toEpochMilli();
+        int removedCount = 0;
+        
+        Iterator<Map.Entry<String, Map<String, Object>>> iterator = registrationParams.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Map<String, Object>> entry = iterator.next();
+            Map<String, Object> params = entry.getValue();
+            
+            if (params.containsKey("expiresAt")) {
+                long expiresAt = (long) params.get("expiresAt");
+                if (currentTime > expiresAt) {
+                    iterator.remove();
+                    removedCount++;
+                    log.debug("Removed expired registration with externalId: {}", entry.getKey());
+                }
+            }
+        }
+        
+        if (removedCount > 0) {
+            log.info("Cleaned up {} expired registration entries", removedCount);
+        }
+    }
+    
+    /**
+     * Step 1: Register an address for KYA (Know Your Address) check
+     * POST /api/kyt/v2/users/{userId}/withdrawal-attempts
+     * 
+     * This just registers the request - no risk check is performed here
+     */
+    @PostMapping("/api/kyt/v2/users/{userId}/withdrawal-attempts")
+    public ResponseEntity<CAKyaRegisterResponse> registerKya(
+            @PathVariable("userId") String userId,
+            @Valid @RequestBody CAKyaRequest request) {
+        log.info("Received Chainalysis KYA register request for userId: {}, request: {}", userId, request);
         
         // Generate external ID
         String externalId = UUID.randomUUID().toString();
         
-        // Store the registration for later checks
+        // Store the parameters for later risk check when alerts are requested
         Map<String, Object> params = new HashMap<>();
         params.put("targetAddress", request.getTargetAddress());
         params.put("chainId", request.getChainId());
+        params.put("requestType", "kya"); // Add type for reference
         
-        // Execute risk check and store result
-        RiskCheckResult result = riskCheckService.checkRisk(params);
-        registrationResults.put(externalId, result);
+        // Add expiration timestamp
+        long expiresAt = Instant.now().toEpochMilli() + expirationTimeMs;
+        params.put("expiresAt", expiresAt);
+        
+        // Generate a random delay between 0-10 seconds
+        int delaySeconds = random.nextInt(11); // 0-10 seconds
+        log.info("Generated random delay of {} seconds for KYA request {}", delaySeconds, externalId);
         
         // Format current time as ISO timestamp
         String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
         
-        CAKyaRegisterResponse response = CAKyaRegisterResponse.builder()
-                .updatedAt(timestamp)
+        // Build the response with the registration data
+        CAKyaRegisterResponse.Builder responseBuilder = CAKyaRegisterResponse.builder()
                 .address(request.getTargetAddress())
                 .asset(request.getAssetName() != null ? request.getAssetName() : "ETH")
                 .network(mapChainIdToNetwork(request.getChainId()))
                 .assetAmount(request.getAssetAmount() != null ? request.getAssetAmount() : BigDecimal.ONE)
                 .attemptIdentifier(request.getIdentifier())
-                .externalId(externalId)
-                .build();
+                .externalId(externalId);
         
+        // If delay is 0, set updatedAt immediately
+        if (delaySeconds == 0) {
+            responseBuilder.updatedAt(timestamp);
+            params.put("updatedAt", timestamp);
+            log.info("Immediately setting updatedAt for KYA request {}", externalId);
+        } else {
+            // Otherwise, compute the valid timestamp for later checks
+            long validTimestamp = Instant.now().getEpochSecond() + delaySeconds;
+            params.put("validTimestamp", validTimestamp);
+            log.info("Setting validTimestamp {} for KYA request {}", validTimestamp, externalId);
+        }
+        
+        // Store parameters for later use - NO risk check performed here
+        registrationParams.put(externalId, params);
+        
+        CAKyaRegisterResponse response = responseBuilder.build();
         return ResponseEntity.ok(response);
     }
     
     /**
      * Step 2: Check status of a KYA registration
+     * GET /api/kyt/v2/withdrawal-attempts/{externalId}
+     * 
+     * Just returns registration status - no risk check performed
      */
-    @GetMapping("/kya/register/{externalId}")
-    public ResponseEntity<CAKyaRegisterResponse> checkKyaRegistration(@PathVariable String externalId) {
+    @GetMapping("/api/kyt/v2/withdrawal-attempts/{externalId}")
+    public ResponseEntity<CAKyaRegisterResponse> checkKyaRegistration(@PathVariable("externalId") String externalId) {
         log.info("Received Chainalysis KYA registration check for externalId: {}", externalId);
         
-        // If the registration exists, return an updated timestamp
-        if (registrationResults.containsKey(externalId)) {
-            // Format current time as ISO timestamp
-            String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
+        // If the registration exists, check if it's ready
+        if (registrationParams.containsKey(externalId)) {
+            Map<String, Object> params = registrationParams.get(externalId);
             
-            CAKyaRegisterResponse response = CAKyaRegisterResponse.builder()
-                    .updatedAt(timestamp)
-                    .externalId(externalId)
-                    .build();
+            // Current timestamp for checking and response
+            long currentTimestamp = Instant.now().getEpochSecond();
+            String currentTimeString = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
             
-            return ResponseEntity.ok(response);
+            // Build the response
+            CAKyaRegisterResponse.Builder responseBuilder = CAKyaRegisterResponse.builder()
+                    .externalId(externalId);
+            
+            // Case 1: Already has updatedAt set
+            if (params.containsKey("updatedAt")) {
+                responseBuilder.updatedAt((String) params.get("updatedAt"));
+                log.info("Returning existing updatedAt for KYA request {}", externalId);
+            } 
+            // Case 2: Has validTimestamp and current time is after it
+            else if (params.containsKey("validTimestamp")) {
+                long validTimestamp = (long) params.get("validTimestamp");
+                
+                if (currentTimestamp >= validTimestamp) {
+                    responseBuilder.updatedAt(currentTimeString);
+                    params.put("updatedAt", currentTimeString); // Store for future requests
+                    log.info("Setting updatedAt now that validTimestamp has passed for KYA request {}", externalId);
+                }
+                // If current time is not after validTimestamp, leave updatedAt unset
+            }
+            
+            return ResponseEntity.ok(responseBuilder.build());
         }
         
         // If not found, return empty response
@@ -134,27 +223,35 @@ public class ChainalysisController implements KyxProviderApi {
     
     /**
      * Step 3: Get alerts for a registered address
+     * GET /api/kyt/v2/withdrawal-attempts/{externalId}/alerts
+     * 
+     * This is where the actual risk check is performed
      */
-    @GetMapping("/kya/alerts/{externalId}")
-    public ResponseEntity<CAKyXAlertResponse> getKyaAlerts(@PathVariable String externalId) {
+    @GetMapping("/api/kyt/v2/withdrawal-attempts/{externalId}/alerts")
+    public ResponseEntity<CAKyXAlertResponse> getKyaAlerts(@PathVariable("externalId") String externalId) {
         log.info("Received Chainalysis KYA alerts request for externalId: {}", externalId);
         
         CAKyXAlertResponse response = new CAKyXAlertResponse();
         
-        // If the registration exists and is risky, return alerts
-        if (registrationResults.containsKey(externalId) && registrationResults.get(externalId).isInRisk()) {
-            RiskCheckResult result = registrationResults.get(externalId);
+        // If the registration exists, perform risk check now
+        if (registrationParams.containsKey(externalId)) {
+            Map<String, Object> params = registrationParams.get(externalId);
             
-            CAKyXAlertResponse.Alert alert = CAKyXAlertResponse.Alert.builder()
-                    .alertLevel("HIGH")
-                    .category("money_laundering_fraud")
-                    .service("Mock KYX Server")
-                    .externalId(externalId)
-                    .alertAmount(BigDecimal.valueOf(1000))
-                    .exposureType("DIRECT")
-                    .build();
+            // Perform risk check when alerts are requested
+            RiskCheckResult result = riskCheckService.checkRisk(params);
             
-            response.setAlerts(Collections.singletonList(alert));
+            if (result.isInRisk()) {
+                CAKyXAlertResponse.Alert alert = CAKyXAlertResponse.Alert.builder()
+                        .alertLevel("HIGH")
+                        .category("money_laundering_fraud")
+                        .service("Mock KYX Server")
+                        .externalId(externalId)
+                        .alertAmount(BigDecimal.valueOf(1000))
+                        .exposureType("DIRECT")
+                        .build();
+                
+                response.setAlerts(Collections.singletonList(alert));
+            }
         }
         
         return ResponseEntity.ok(response);
@@ -162,39 +259,50 @@ public class ChainalysisController implements KyxProviderApi {
     
     /**
      * Step 1: Register a transaction for KYT (Know Your Transaction) check
+     * POST /api/kyt/v2/users/{userId}/transfers
+     * 
+     * This just registers the request - no risk check is performed here
      */
-    @PostMapping("/kyt/register")
-    public ResponseEntity<CAKytRegisterResponse> registerKyt(@Valid @RequestBody CAKytRequest request) {
-        log.info("Received Chainalysis KYT register request: {}", request);
+    @PostMapping("/api/kyt/v2/users/{userId}/transfers")
+    public ResponseEntity<CAKytRegisterResponse> registerKyt(
+            @PathVariable("userId") String userId,
+            @Valid @RequestBody CAKytRequest request) {
+        log.info("Received Chainalysis KYT register request for userId: {}, request: {}", userId, request);
         
         // Generate external ID
         String externalId = UUID.randomUUID().toString();
         
-        // Store the registration for later checks
+        // Store the parameters for later risk check when alerts are requested
         Map<String, Object> params = new HashMap<>();
         params.put("fromAddress", request.getFromAddress());
         params.put("toAddress", request.getToAddress());
         params.put("tokenName", request.getTokenName());
         params.put("tokenAmount", request.getTokenAmount());
         params.put("chainId", request.getChainId());
+        params.put("requestType", "kyt"); // Add type for reference
         
         if (request.getTxHash() != null) {
             params.put("txHash", request.getTxHash());
         }
         
-        // Execute risk check and store result
-        RiskCheckResult result = riskCheckService.checkRisk(params);
-        registrationResults.put(externalId, result);
+        // Add expiration timestamp
+        long expiresAt = Instant.now().toEpochMilli() + expirationTimeMs;
+        params.put("expiresAt", expiresAt);
+        
+        // Generate a random delay between 0-10 seconds
+        int delaySeconds = random.nextInt(11); // 0-10 seconds
+        log.info("Generated random delay of {} seconds for KYT request {}", delaySeconds, externalId);
         
         // Format current time as ISO timestamp
         String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
         
+        // Calculate asset amount for response
         BigDecimal assetAmount = BigDecimal.valueOf(
                 request.getTokenAmount() != null ? request.getTokenAmount() : 0.0
         );
         
-        CAKytRegisterResponse response = CAKytRegisterResponse.builder()
-                .updatedAt(timestamp)
+        // Build the response with the registration data
+        CAKytRegisterResponse.Builder responseBuilder = CAKytRegisterResponse.builder()
                 .asset(request.getTokenName())
                 .network(mapChainIdToNetwork(request.getChainId()))
                 .transferReference("tx:" + request.getToAddress())
@@ -204,46 +312,143 @@ public class ChainalysisController implements KyxProviderApi {
                 .assetAmount(assetAmount)
                 .timestamp(timestamp)
                 .outputAddress(request.getToAddress())
-                .externalId(externalId)
-                .build();
+                .externalId(externalId);
+        
+        // If delay is 0, set updatedAt immediately
+        if (delaySeconds == 0) {
+            responseBuilder.updatedAt(timestamp);
+            params.put("updatedAt", timestamp);
+            log.info("Immediately setting updatedAt for KYT request {}", externalId);
+        } else {
+            // Otherwise, compute the valid timestamp for later checks
+            long validTimestamp = Instant.now().getEpochSecond() + delaySeconds;
+            params.put("validTimestamp", validTimestamp);
+            log.info("Setting validTimestamp {} for KYT request {}", validTimestamp, externalId);
+        }
+        
+        // Store parameters for later use - NO risk check performed here
+        registrationParams.put(externalId, params);
+        
+        CAKytRegisterResponse response = responseBuilder.build();
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * Step 2: Check status of a KYT registration
+     * GET /api/kyt/v2/transfers/{externalId}
+     * 
+     * Just returns registration status - no risk check performed
+     */
+    @GetMapping("/api/kyt/v2/transfers/{externalId}")
+    public ResponseEntity<CAKytRegisterResponse> checkKytRegistration(@PathVariable("externalId") String externalId) {
+        log.info("Received Chainalysis KYT registration check for externalId: {}", externalId);
+        
+        // If the registration exists, check if it's ready
+        if (registrationParams.containsKey(externalId)) {
+            Map<String, Object> params = registrationParams.get(externalId);
+            
+            // Current timestamp for checking and response
+            long currentTimestamp = Instant.now().getEpochSecond();
+            String currentTimeString = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
+            
+            // Build the response
+            CAKytRegisterResponse.Builder responseBuilder = CAKytRegisterResponse.builder()
+                    .externalId(externalId);
+            
+            // Case 1: Already has updatedAt set
+            if (params.containsKey("updatedAt")) {
+                responseBuilder.updatedAt((String) params.get("updatedAt"));
+                log.info("Returning existing updatedAt for KYT request {}", externalId);
+            } 
+            // Case 2: Has validTimestamp and current time is after it
+            else if (params.containsKey("validTimestamp")) {
+                long validTimestamp = (long) params.get("validTimestamp");
+                
+                if (currentTimestamp >= validTimestamp) {
+                    responseBuilder.updatedAt(currentTimeString);
+                    params.put("updatedAt", currentTimeString); // Store for future requests
+                    log.info("Setting updatedAt now that validTimestamp has passed for KYT request {}", externalId);
+                }
+                // If current time is not after validTimestamp, leave updatedAt unset
+            }
+            
+            return ResponseEntity.ok(responseBuilder.build());
+        }
+        
+        // If not found, return empty response
+        return ResponseEntity.notFound().build();
+    }
+    
+    /**
+     * Step 3: Get alerts for a registered transaction
+     * GET /api/kyt/v2/transfers/{externalId}/alerts
+     * 
+     * This is where the actual risk check is performed
+     */
+    @GetMapping("/api/kyt/v2/transfers/{externalId}/alerts")
+    public ResponseEntity<CAKyXAlertResponse> getKytAlerts(@PathVariable("externalId") String externalId) {
+        log.info("Received Chainalysis KYT alerts request for externalId: {}", externalId);
+        
+        CAKyXAlertResponse response = new CAKyXAlertResponse();
+        
+        // If the registration exists, perform risk check now
+        if (registrationParams.containsKey(externalId)) {
+            Map<String, Object> params = registrationParams.get(externalId);
+            
+            // Perform risk check when alerts are requested
+            RiskCheckResult result = riskCheckService.checkRisk(params);
+            
+            if (result.isInRisk()) {
+                CAKyXAlertResponse.Alert alert = CAKyXAlertResponse.Alert.builder()
+                        .alertLevel("HIGH")
+                        .category("money_laundering_fraud")
+                        .service("Mock KYX Server")
+                        .externalId(externalId)
+                        .alertAmount(BigDecimal.valueOf(1000))
+                        .exposureType("DIRECT")
+                        .build();
+                
+                response.setAlerts(Collections.singletonList(alert));
+            }
+        }
         
         return ResponseEntity.ok(response);
     }
     
     /**
-     * Step 2: Get alerts for a registered transaction
+     * Monitor alerts for registered entities
+     * GET /api/kyt/v1/alerts
      */
-    @GetMapping("/kyt/alerts/{externalId}")
-    public ResponseEntity<CAKyXAlertResponse> getKytAlerts(@PathVariable String externalId) {
-        log.info("Received Chainalysis KYT alerts request for externalId: {}", externalId);
-        
-        return getKyaAlerts(externalId); // Reuse the KYA alerts method as they have the same response format
-    }
-    
-    /**
-     * Step 3: Monitor alerts for registered entities
-     */
-    @GetMapping("/monitoring")
-    public ResponseEntity<CAKyXAlertMonitorResponse> monitorAlerts() {
-        log.info("Received Chainalysis monitoring request");
+    @GetMapping("/api/kyt/v1/alerts")
+    public ResponseEntity<CAKyXAlertMonitorResponse> monitorAlerts(
+            @RequestParam(name = "createdAt_lte", required = false) String endTime,
+            @RequestParam(name = "createdAt_gte", required = false) String startTime,
+            @RequestParam(name = "limit", defaultValue = "100") int limit,
+            @RequestParam(name = "offset", defaultValue = "0") int offset) {
+        log.info("Received Chainalysis monitoring request with params: start={}, end={}, limit={}, offset={}", 
+                startTime, endTime, limit, offset);
         
         CAKyXAlertMonitorResponse response = CAKyXAlertMonitorResponse.builder()
-                .limit(10)
-                .offset(0)
+                .limit(limit)
+                .offset(offset)
                 .total(0)
                 .data(new ArrayList<>())
                 .build();
         
-        // Add alert results for any risky transactions/addresses
-        for (Map.Entry<String, RiskCheckResult> entry : registrationResults.entrySet()) {
-            if (entry.getValue().isInRisk()) {
-                String externalId = entry.getKey();
-                
+        // For each registered entity, perform a risk check if not done already
+        for (Map.Entry<String, Map<String, Object>> entry : registrationParams.entrySet()) {
+            String externalId = entry.getKey();
+            Map<String, Object> params = entry.getValue();
+            
+            // Perform risk check for monitoring
+            RiskCheckResult result = riskCheckService.checkRisk(params);
+            
+            if (result.isInRisk()) {
                 CAKyXAlertMonitorResponse.AlertResult alert = CAKyXAlertMonitorResponse.AlertResult.builder()
                         .alertAmountUsd(BigDecimal.valueOf(1000))
                         .category("money_laundering_fraud")
                         .transactionHash(UUID.randomUUID().toString())
-                        .transferReference("tx:0x1234567890")
+                        .transferReference("tx:" + (params.containsKey("toAddress") ? params.get("toAddress") : "0x1234567890"))
                         .exposureType("DIRECT")
                         .transferReportedAt(DateTimeFormatter.ISO_INSTANT.format(Instant.now()))
                         .alertIdentifier(UUID.randomUUID().toString())

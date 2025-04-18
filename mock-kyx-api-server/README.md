@@ -42,7 +42,7 @@ Chainalysis uses a multi-step process for both KYA and KYT checks:
 
 Step 1: Register an address for monitoring
 ```
-POST /kya/register
+POST /api/kyt/v2/users/{userId}/withdrawal-attempts
 ```
 ```json
 {
@@ -54,19 +54,19 @@ POST /kya/register
 
 Step 2: Check registration status
 ```
-GET /kya/register/{externalId}
+GET /api/kyt/v2/withdrawal-attempts/{externalId}
 ```
 
 Step 3: Get alerts for the address
 ```
-GET /kya/alerts/{externalId}
+GET /api/kyt/v2/withdrawal-attempts/{externalId}/alerts
 ```
 
 #### KYT (Know Your Transaction) Flow:
 
 Step 1: Register a transaction for monitoring
 ```
-POST /kyt/register
+POST /api/kyt/v2/users/{userId}/transfers
 ```
 ```json
 {
@@ -79,21 +79,21 @@ POST /kyt/register
 }
 ```
 
-Step 2: Get alerts for the transaction
+Step 2: Check registration status
 ```
-GET /kyt/alerts/{externalId}
+GET /api/kyt/v2/transfers/{externalId}
+```
+
+Step 3: Get alerts for the transaction
+```
+GET /api/kyt/v2/transfers/{externalId}/alerts
 ```
 
 #### Additional Monitoring:
 
 Get all active alerts:
 ```
-GET /monitoring
-```
-
-Legacy transaction check:
-```
-POST /check
+GET /api/kyt/v1/alerts?createdAt_lte={endTime}&createdAt_gte={startTime}&limit={limit}&offset={offset}
 ```
 
 ## Usage
@@ -106,6 +106,12 @@ goplus.url=https://api.gopluslabs.io/api/v1/...
 
 # Updated configuration for mock server
 goplus.url=http://localhost:8080/...
+
+# Original Chainalysis configuration
+chainalysis.host=https://api.chainalysis.com
+
+# Updated configuration for mock server
+chainalysis.host=http://localhost:8080
 ```
 
 ## Configuration
