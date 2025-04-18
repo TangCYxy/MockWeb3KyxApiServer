@@ -7,6 +7,10 @@ import com.wanel.mocking.kyx.server.core.service.PythonScriptExecutor;
 import org.python.core.PyDictionary;
 import org.python.core.PyObject;
 import org.python.core.PyString;
+import org.python.core.PyInteger;
+import org.python.core.PyLong;
+import org.python.core.PyFloat;
+import org.python.core.PyBoolean;
 import org.python.core.Py;
 import org.python.util.PythonInterpreter;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -94,6 +98,28 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
         }
     }
 
+    /**
+     * Convert a Java object to an appropriate PyObject
+     */
+    private PyObject toPyObject(Object obj) {
+        if (obj == null) {
+            return Py.None;
+        } else if (obj instanceof String) {
+            return new PyString((String) obj);
+        } else if (obj instanceof Integer) {
+            return new PyInteger((Integer) obj);
+        } else if (obj instanceof Long) {
+            return new PyLong((Long) obj);
+        } else if (obj instanceof Double || obj instanceof Float) {
+            return new PyFloat(((Number) obj).doubleValue());
+        } else if (obj instanceof Boolean) {
+            return ((Boolean) obj) ? Py.True : Py.False;
+        } else {
+            // For complex objects, convert to string
+            return new PyString(String.valueOf(obj));
+        }
+    }
+
     @Override
     public Map<String, Object> executeFunction(String functionName, Map<String, Object> params) {
         Map<String, Object> result = new HashMap<>();
@@ -108,7 +134,7 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
             
             PyDictionary pyParams = new PyDictionary();
             for (Map.Entry<String, Object> entry : params.entrySet()) {
-                pyParams.__setitem__(new PyString(entry.getKey()), objectMapper.convertValue(entry.getValue(), PyObject.class));
+                pyParams.__setitem__(new PyString(entry.getKey()), toPyObject(entry.getValue()));
             }
             
             PyObject pyFunction = interpreter.get(functionName);
@@ -120,7 +146,22 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
             }
             
             PyObject pyResult = pyFunction.__call__(pyParams);
-            result = objectMapper.convertValue(pyResult, Map.class);
+            
+            // Convert PyDictionary to Java Map
+            if (pyResult instanceof PyDictionary) {
+                PyDictionary pyDict = (PyDictionary) pyResult;
+                for (Object key : pyDict.keys()) {
+                    String keyStr = key.toString();
+                    // Convert key to PyString for lookup
+                    PyObject value = pyDict.__finditem__(new PyString(keyStr));
+                    result.put(keyStr, value.__tojava__(Object.class));
+                }
+            } else {
+                log.error("Python function did not return a dictionary");
+                result.put("inRisk", false);
+                result.put("riskDetail", "Error: Python function returned unexpected type");
+            }
+            
             log.info("Risk check result using Python: {}", result);
             
         } catch (Exception e) {
