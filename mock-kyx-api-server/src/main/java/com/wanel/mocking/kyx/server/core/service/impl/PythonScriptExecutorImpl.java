@@ -14,14 +14,19 @@ import org.python.core.PyBoolean;
 import org.python.core.Py;
 import org.python.util.PythonInterpreter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 @Slf4j
@@ -30,12 +35,15 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
     private final KyxConfiguration kyxConfiguration;
     private final ObjectMapper objectMapper;
     private PythonInterpreter interpreter;
+    private File scriptFile;
+    private final AtomicLong lastModifiedTime = new AtomicLong(0);
 
     @Autowired
     public PythonScriptExecutorImpl(KyxConfiguration kyxConfiguration, ObjectMapper objectMapper) {
         this.kyxConfiguration = kyxConfiguration;
         this.objectMapper = objectMapper;
         initPythonInterpreter();
+        loadScript();
     }
 
     private void initPythonInterpreter() {
@@ -46,8 +54,8 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
             System.setProperty("python.cachedir.skip", "true");
             System.setProperty("python.console.encoding", "UTF-8");
             
-            // Add script directory to python.path to ensure it can be found
-            File scriptFile = new File(kyxConfiguration.getPython().getScriptPath());
+            // Get script file path
+            scriptFile = getScriptFile();
             String scriptDir = scriptFile.getParent() != null ? scriptFile.getParent() : ".";
             
             // Use the script directory and current directory in python.path
@@ -76,9 +84,44 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
             
             // Show the Python system path for debugging
             interpreter.exec("print('Python sys.path:', sys.path)");
+        } catch (Exception e) {
+            log.error("Error initializing Python interpreter: {}", e.getMessage(), e);
+        }
+    }
+    
+    private File getScriptFile() {
+        // First, try to use the configured script path
+        String configuredPath = kyxConfiguration.getPython().getScriptPath();
+        File configFile = new File(configuredPath);
+        
+        if (configFile.exists()) {
+            return configFile;
+        }
+        
+        // If not found, try to find it in resources/scripts folder
+        try {
+            Path resourcePath = Paths.get("src/main/resources/scripts/kyx_script.py");
+            if (Files.exists(resourcePath)) {
+                return resourcePath.toFile();
+            }
             
-            // Load the script
+            // Finally, check if it's in the classpath
+            String classpathResource = "/scripts/kyx_script.py";
+            Path tempFile = Files.createTempFile("kyx_script", ".py");
+            Files.copy(getClass().getResourceAsStream(classpathResource), tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return tempFile.toFile();
+        } catch (Exception e) {
+            log.warn("Could not locate script in resources, falling back to configured path: {}", configuredPath);
+            return configFile;
+        }
+    }
+    
+    private synchronized void loadScript() {
+        try {
             if (scriptFile.exists()) {
+                // Update last modified time
+                lastModifiedTime.set(scriptFile.lastModified());
+                
                 log.info("Loading Python script from: {}", scriptFile.getAbsolutePath());
                 interpreter.execfile(scriptFile.getAbsolutePath());
                 log.info("Python script loaded successfully");
@@ -94,7 +137,23 @@ public class PythonScriptExecutorImpl implements PythonScriptExecutor {
                 log.error("Python script not found at: {}", scriptFile.getAbsolutePath());
             }
         } catch (Exception e) {
-            log.error("Error initializing Python interpreter: {}", e.getMessage(), e);
+            log.error("Error loading Python script: {}", e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Check for script file changes every 5 seconds and reload if modified
+     */
+    @Scheduled(fixedDelay = 5000)
+    public void checkForScriptChanges() {
+        if (scriptFile != null && scriptFile.exists()) {
+            long currentModified = scriptFile.lastModified();
+            
+            if (currentModified > lastModifiedTime.get()) {
+                log.info("Detected changes in Python script file, reloading...");
+                loadScript();
+                log.info("Python script reloaded successfully");
+            }
         }
     }
 

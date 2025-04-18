@@ -63,10 +63,10 @@ def kyxCheck(params):
         risk_detail = "money laundry or fraud"
         
         if amount_risk:
-            risk_detail += f" - Large amount transaction: {token_amount}"
+            risk_detail += " - Large amount transaction: {}".format(token_amount)
         
         if address_risk:
-            risk_detail += f" - Suspicious address pattern: {risk_address}"
+            risk_detail += " - Suspicious address pattern: {}".format(risk_address)
     
     # Return risk assessment
     return {
