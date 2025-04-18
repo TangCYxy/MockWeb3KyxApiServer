@@ -147,18 +147,18 @@ public class ChainalysisController implements KyxProviderApi {
         // Format current time as ISO timestamp
         String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
         
-        // Build the response with the registration data
-        CAKyaRegisterResponse.Builder responseBuilder = CAKyaRegisterResponse.builder()
-                .address(request.getTargetAddress())
-                .asset(request.getAssetName() != null ? request.getAssetName() : "ETH")
-                .network(mapChainIdToNetwork(request.getChainId()))
-                .assetAmount(request.getAssetAmount() != null ? request.getAssetAmount() : BigDecimal.ONE)
-                .attemptIdentifier(request.getIdentifier())
-                .externalId(externalId);
+        // Create response object
+        CAKyaRegisterResponse response = new CAKyaRegisterResponse();
+        response.setAddress(request.getTargetAddress());
+        response.setAsset(request.getAssetName() != null ? request.getAssetName() : "ETH");
+        response.setNetwork(mapChainIdToNetwork(request.getChainId()));
+        response.setAssetAmount(request.getAssetAmount() != null ? request.getAssetAmount() : BigDecimal.ONE);
+        response.setAttemptIdentifier(request.getIdentifier());
+        response.setExternalId(externalId);
         
         // If delay is 0, set updatedAt immediately
         if (delaySeconds == 0) {
-            responseBuilder.updatedAt(timestamp);
+            response.setUpdatedAt(timestamp);
             params.put("updatedAt", timestamp);
             log.info("Immediately setting updatedAt for KYA request {}", externalId);
         } else {
@@ -171,7 +171,6 @@ public class ChainalysisController implements KyxProviderApi {
         // Store parameters for later use - NO risk check performed here
         registrationParams.put(externalId, params);
         
-        CAKyaRegisterResponse response = responseBuilder.build();
         return ResponseEntity.ok(response);
     }
     
@@ -193,13 +192,13 @@ public class ChainalysisController implements KyxProviderApi {
             long currentTimestamp = Instant.now().getEpochSecond();
             String currentTimeString = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
             
-            // Build the response
-            CAKyaRegisterResponse.Builder responseBuilder = CAKyaRegisterResponse.builder()
-                    .externalId(externalId);
+            // Create response object
+            CAKyaRegisterResponse response = new CAKyaRegisterResponse();
+            response.setExternalId(externalId);
             
             // Case 1: Already has updatedAt set
             if (params.containsKey("updatedAt")) {
-                responseBuilder.updatedAt((String) params.get("updatedAt"));
+                response.setUpdatedAt((String) params.get("updatedAt"));
                 log.info("Returning existing updatedAt for KYA request {}", externalId);
             } 
             // Case 2: Has validTimestamp and current time is after it
@@ -207,14 +206,14 @@ public class ChainalysisController implements KyxProviderApi {
                 long validTimestamp = (long) params.get("validTimestamp");
                 
                 if (currentTimestamp >= validTimestamp) {
-                    responseBuilder.updatedAt(currentTimeString);
+                    response.setUpdatedAt(currentTimeString);
                     params.put("updatedAt", currentTimeString); // Store for future requests
                     log.info("Setting updatedAt now that validTimestamp has passed for KYA request {}", externalId);
                 }
                 // If current time is not after validTimestamp, leave updatedAt unset
             }
             
-            return ResponseEntity.ok(responseBuilder.build());
+            return ResponseEntity.ok(response);
         }
         
         // If not found, return empty response
@@ -241,14 +240,13 @@ public class ChainalysisController implements KyxProviderApi {
             RiskCheckResult result = riskCheckService.checkRisk(params);
             
             if (result.isInRisk()) {
-                CAKyXAlertResponse.Alert alert = CAKyXAlertResponse.Alert.builder()
-                        .alertLevel("HIGH")
-                        .category("money_laundering_fraud")
-                        .service("Mock KYX Server")
-                        .externalId(externalId)
-                        .alertAmount(BigDecimal.valueOf(1000))
-                        .exposureType("DIRECT")
-                        .build();
+                CAKyXAlertResponse.Alert alert = new CAKyXAlertResponse.Alert();
+                alert.setAlertLevel("HIGH");
+                alert.setCategory("money_laundering_fraud");
+                alert.setService("Mock KYX Server");
+                alert.setExternalId(externalId);
+                alert.setAlertAmount(BigDecimal.valueOf(1000));
+                alert.setExposureType("DIRECT");
                 
                 response.setAlerts(Collections.singletonList(alert));
             }
@@ -301,22 +299,22 @@ public class ChainalysisController implements KyxProviderApi {
                 request.getTokenAmount() != null ? request.getTokenAmount() : 0.0
         );
         
-        // Build the response with the registration data
-        CAKytRegisterResponse.Builder responseBuilder = CAKytRegisterResponse.builder()
-                .asset(request.getTokenName())
-                .network(mapChainIdToNetwork(request.getChainId()))
-                .transferReference("tx:" + request.getToAddress())
-                .tx(request.getTxHash() != null ? request.getTxHash() : UUID.randomUUID().toString())
-                .idx(BigInteger.ZERO)
-                .usdAmount(assetAmount.multiply(BigDecimal.valueOf(1000))) // Mock USD conversion
-                .assetAmount(assetAmount)
-                .timestamp(timestamp)
-                .outputAddress(request.getToAddress())
-                .externalId(externalId);
+        // Create response object
+        CAKytRegisterResponse response = new CAKytRegisterResponse();
+        response.setAsset(request.getTokenName());
+        response.setNetwork(mapChainIdToNetwork(request.getChainId()));
+        response.setTransferReference("tx:" + request.getToAddress());
+        response.setTx(request.getTxHash() != null ? request.getTxHash() : UUID.randomUUID().toString());
+        response.setIdx(BigInteger.ZERO);
+        response.setUsdAmount(assetAmount.multiply(BigDecimal.valueOf(1000))); // Mock USD conversion
+        response.setAssetAmount(assetAmount);
+        response.setTimestamp(timestamp);
+        response.setOutputAddress(request.getToAddress());
+        response.setExternalId(externalId);
         
         // If delay is 0, set updatedAt immediately
         if (delaySeconds == 0) {
-            responseBuilder.updatedAt(timestamp);
+            response.setUpdatedAt(timestamp);
             params.put("updatedAt", timestamp);
             log.info("Immediately setting updatedAt for KYT request {}", externalId);
         } else {
@@ -329,7 +327,6 @@ public class ChainalysisController implements KyxProviderApi {
         // Store parameters for later use - NO risk check performed here
         registrationParams.put(externalId, params);
         
-        CAKytRegisterResponse response = responseBuilder.build();
         return ResponseEntity.ok(response);
     }
     
@@ -351,13 +348,13 @@ public class ChainalysisController implements KyxProviderApi {
             long currentTimestamp = Instant.now().getEpochSecond();
             String currentTimeString = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
             
-            // Build the response
-            CAKytRegisterResponse.Builder responseBuilder = CAKytRegisterResponse.builder()
-                    .externalId(externalId);
+            // Create response object
+            CAKytRegisterResponse response = new CAKytRegisterResponse();
+            response.setExternalId(externalId);
             
             // Case 1: Already has updatedAt set
             if (params.containsKey("updatedAt")) {
-                responseBuilder.updatedAt((String) params.get("updatedAt"));
+                response.setUpdatedAt((String) params.get("updatedAt"));
                 log.info("Returning existing updatedAt for KYT request {}", externalId);
             } 
             // Case 2: Has validTimestamp and current time is after it
@@ -365,14 +362,14 @@ public class ChainalysisController implements KyxProviderApi {
                 long validTimestamp = (long) params.get("validTimestamp");
                 
                 if (currentTimestamp >= validTimestamp) {
-                    responseBuilder.updatedAt(currentTimeString);
+                    response.setUpdatedAt(currentTimeString);
                     params.put("updatedAt", currentTimeString); // Store for future requests
                     log.info("Setting updatedAt now that validTimestamp has passed for KYT request {}", externalId);
                 }
                 // If current time is not after validTimestamp, leave updatedAt unset
             }
             
-            return ResponseEntity.ok(responseBuilder.build());
+            return ResponseEntity.ok(response);
         }
         
         // If not found, return empty response
@@ -399,14 +396,13 @@ public class ChainalysisController implements KyxProviderApi {
             RiskCheckResult result = riskCheckService.checkRisk(params);
             
             if (result.isInRisk()) {
-                CAKyXAlertResponse.Alert alert = CAKyXAlertResponse.Alert.builder()
-                        .alertLevel("HIGH")
-                        .category("money_laundering_fraud")
-                        .service("Mock KYX Server")
-                        .externalId(externalId)
-                        .alertAmount(BigDecimal.valueOf(1000))
-                        .exposureType("DIRECT")
-                        .build();
+                CAKyXAlertResponse.Alert alert = new CAKyXAlertResponse.Alert();
+                alert.setAlertLevel("HIGH");
+                alert.setCategory("money_laundering_fraud");
+                alert.setService("Mock KYX Server");
+                alert.setExternalId(externalId);
+                alert.setAlertAmount(BigDecimal.valueOf(1000));
+                alert.setExposureType("DIRECT");
                 
                 response.setAlerts(Collections.singletonList(alert));
             }
@@ -428,12 +424,11 @@ public class ChainalysisController implements KyxProviderApi {
         log.info("Received Chainalysis monitoring request with params: start={}, end={}, limit={}, offset={}", 
                 startTime, endTime, limit, offset);
         
-        CAKyXAlertMonitorResponse response = CAKyXAlertMonitorResponse.builder()
-                .limit(limit)
-                .offset(offset)
-                .total(0)
-                .data(new ArrayList<>())
-                .build();
+        CAKyXAlertMonitorResponse response = new CAKyXAlertMonitorResponse();
+        response.setLimit(limit);
+        response.setOffset(offset);
+        response.setTotal(0);
+        response.setData(new ArrayList<>());
         
         // For each registered entity, perform a risk check if not done already
         for (Map.Entry<String, Map<String, Object>> entry : registrationParams.entrySet()) {
@@ -444,16 +439,15 @@ public class ChainalysisController implements KyxProviderApi {
             RiskCheckResult result = riskCheckService.checkRisk(params);
             
             if (result.isInRisk()) {
-                CAKyXAlertMonitorResponse.AlertResult alert = CAKyXAlertMonitorResponse.AlertResult.builder()
-                        .alertAmountUsd(BigDecimal.valueOf(1000))
-                        .category("money_laundering_fraud")
-                        .transactionHash(UUID.randomUUID().toString())
-                        .transferReference("tx:" + (params.containsKey("toAddress") ? params.get("toAddress") : "0x1234567890"))
-                        .exposureType("DIRECT")
-                        .transferReportedAt(DateTimeFormatter.ISO_INSTANT.format(Instant.now()))
-                        .alertIdentifier(UUID.randomUUID().toString())
-                        .direction("SENT")
-                        .build();
+                CAKyXAlertMonitorResponse.AlertResult alert = new CAKyXAlertMonitorResponse.AlertResult();
+                alert.setAlertAmountUsd(BigDecimal.valueOf(1000));
+                alert.setCategory("money_laundering_fraud");
+                alert.setTransactionHash(UUID.randomUUID().toString());
+                alert.setTransferReference("tx:" + (params.containsKey("toAddress") ? params.get("toAddress") : "0x1234567890"));
+                alert.setExposureType("DIRECT");
+                alert.setTransferReportedAt(DateTimeFormatter.ISO_INSTANT.format(Instant.now()));
+                alert.setAlertIdentifier(UUID.randomUUID().toString());
+                alert.setDirection("SENT");
                 
                 response.getData().add(alert);
                 response.setTotal(response.getTotal() + 1);

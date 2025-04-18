@@ -46,7 +46,7 @@ public class GoPlusControllerTest {
                 .riskDetail("")
                 .build();
         
-        when(riskCheckService.checkRisk(any())).thenReturn(result);
+        when(riskCheckService.checkRisk(any(TransactionCheckRequest.class))).thenReturn(result);
         
         // Act & Assert
         mockMvc.perform(post("/api/goplus/check")
@@ -75,7 +75,7 @@ public class GoPlusControllerTest {
                 .riskDetail("Large amount transaction")
                 .build();
         
-        when(riskCheckService.checkRisk(any())).thenReturn(result);
+        when(riskCheckService.checkRisk(any(TransactionCheckRequest.class))).thenReturn(result);
         
         // Act & Assert
         mockMvc.perform(post("/api/goplus/check")
