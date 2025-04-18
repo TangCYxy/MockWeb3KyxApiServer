@@ -1,0 +1,35 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# package reusing
+- always try to reuse existing resources
+# package name
+- java sdk group artifact version is com.wanel.mocking.kyx.server
+
+# project backgroud information
+- our other java project needs to access "outside kyx http api provider service" to check if some web3 address or transaction is in risk or not.
+- we need to build a customized server that accept http api calls just like the "outside kyx http api provider service" and test specific responses so that we can have a fully and deeply test for out other java project logics. 
+
+# project purpose
+- this project build a http server that accept http api request and returns specific response as we configured
+
+
+# project structure
+- there should be at least 4 packages inside the project that stands for several features
+    - apis: store the apis provided for out side callers
+    - app: contains the main application class definition that contains entry points, and implementations for interfaces provided in package "apis",but its functionality are calls of services defined in the package "core"
+    - bean: store the common data classes needed in the project wide usage. such as inputs and outputs 
+    - core: the core logic for this project. 
+    - 
+    
+# project requirements
+- this project can be configured in this nacos server "http://192.168.3.227:8848/"
+  - no need to access with password
+  - namespace is "wanel"
+  - group is "DEFAULT_GROUP"
+  - data id is "mock-kyx-api-server.yml"
+- this project accept http api request and then pick up the core params to run a customized python3 script to compute if this request is in risk or not
+ - the python3 script is defined in the nacos config so that the java server can run python3 script to compute result. 
+ - the python3 script declares at least a function called "kyxCheck", this function accept a mapping struct that contains several keys: fromAddress, toAddress, tokenName, tokenAmount, chainId, txHash(optional), and compute result as a map written in json with 2 key: inRisk, riskDetail(if in risk, describe the risk detail, if not leave it blank)
