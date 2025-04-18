@@ -24,12 +24,14 @@ When a risk is detected, the response will include "money laundry or fraud" in t
 
 ## API Endpoints
 
+The mock server directly exposes the same endpoints as the original providers, allowing you to simply change the host URL in your configuration to point to this server instead of the real providers.
+
 ### GoPlus Provider API
 
 GoPlus only provides a single GET endpoint for address risk assessment:
 
 ```
-GET /api/goplus/address/{address}
+GET /address/{address}
 ```
 
 ### Chainalysis Provider API
@@ -40,7 +42,7 @@ Chainalysis uses a multi-step process for both KYA and KYT checks:
 
 Step 1: Register an address for monitoring
 ```
-POST /api/chainalysis/kya/register
+POST /kya/register
 ```
 ```json
 {
@@ -52,19 +54,19 @@ POST /api/chainalysis/kya/register
 
 Step 2: Check registration status
 ```
-GET /api/chainalysis/kya/register/{externalId}
+GET /kya/register/{externalId}
 ```
 
 Step 3: Get alerts for the address
 ```
-GET /api/chainalysis/kya/alerts/{externalId}
+GET /kya/alerts/{externalId}
 ```
 
 #### KYT (Know Your Transaction) Flow:
 
 Step 1: Register a transaction for monitoring
 ```
-POST /api/chainalysis/kyt/register
+POST /kyt/register
 ```
 ```json
 {
@@ -79,19 +81,31 @@ POST /api/chainalysis/kyt/register
 
 Step 2: Get alerts for the transaction
 ```
-GET /api/chainalysis/kyt/alerts/{externalId}
+GET /kyt/alerts/{externalId}
 ```
 
 #### Additional Monitoring:
 
 Get all active alerts:
 ```
-GET /api/chainalysis/monitoring
+GET /monitoring
 ```
 
 Legacy transaction check:
 ```
-POST /api/chainalysis/check
+POST /check
+```
+
+## Usage
+
+To use this mock server instead of the real providers, simply update the host URL in your application's configuration to point to this server. For example:
+
+```
+# Original configuration
+goplus.url=https://api.gopluslabs.io/api/v1/...
+
+# Updated configuration for mock server
+goplus.url=http://localhost:8080/...
 ```
 
 ## Configuration

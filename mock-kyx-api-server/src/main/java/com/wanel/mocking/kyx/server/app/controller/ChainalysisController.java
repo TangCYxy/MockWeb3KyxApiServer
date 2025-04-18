@@ -7,7 +7,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.wanel.mocking.kyx.server.apis.KyxProviderApi;
@@ -40,7 +39,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * Controller for Chainalysis API endpoints
  */
 @RestController
-@RequestMapping("/api/chainalysis")
 @Slf4j
 @ConditionalOnProperty(name = "kyx.providers[1].enabled", havingValue = "true")
 public class ChainalysisController implements KyxProviderApi {

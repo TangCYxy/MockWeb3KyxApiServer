@@ -25,7 +25,6 @@ import java.util.Map;
  * Controller for GoPlus API endpoints
  */
 @RestController
-@RequestMapping("/api/goplus")
 @Slf4j
 @ConditionalOnProperty(name = "kyx.providers[0].enabled", havingValue = "true")
 public class GoPlusController implements KyxProviderApi {
