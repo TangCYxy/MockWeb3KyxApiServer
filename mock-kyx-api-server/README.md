@@ -177,6 +177,12 @@ If no risk is detected, the response will be:
 {"alerts":[]}
 ```
 
+Example testing a risky address (starting with "0x1" to trigger a risk detection):
+```bash
+curl -X POST "http://localhost:8080/api/kyt/v2/users/testuser/withdrawal-attempts" -H "Content-Type: application/json" -d '{"targetAddress": "0x1234abcdef5678", "chainId": 1, "assetName": "ETH"}'
+```
+Then follow up with status check and alerts retrieval using the externalId from the response.
+
 ##### KYT (Know Your Transaction) Flow:
 
 Step 1: Register a transaction (returns an externalId to use in subsequent requests):
@@ -202,6 +208,15 @@ curl -X GET "http://localhost:8080/api/kyt/v2/transfers/c14de666-f5ee-4e30-829e-
 Example response (no risk detected):
 ```json
 {"alerts":[]}
+```
+
+Example testing a risky transaction (with address starting with "0x1" to trigger risk detection):
+```bash
+curl -X POST "http://localhost:8080/api/kyt/v2/users/testuser/transfers" -H "Content-Type: application/json" -d '{"fromAddress": "0x1234abcdef5678", "toAddress": "0xdef456789abc", "chainId": 1, "tokenName": "ETH", "tokenAmount": 1.0}'
+```
+Then check alerts using the received externalId to see the risk detection response:
+```json
+{"alerts":[{"alertLevel":"HIGH","category":"money_laundering_fraud","service":"Mock KYX Server","externalId":"[EXTERNAL_ID]","alertAmount":1000,"exposureType":"DIRECT"}]}
 ```
 
 For transactions considered risky (e.g., with addresses starting with "1"), the alert response would contain alerts.
